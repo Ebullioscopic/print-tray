@@ -686,29 +686,7 @@ public class PrintSocketClient {
     }
 
     private boolean allowedFromDialog(String UID, Request request, String prompt, Point position) {
-        //If cert can be resolved before the lock, do so and return
-        if (request.hasBlockedCert()) {
-            return false;
-        }
-        if (request.hasSavedCert()) {
-            return true;
-        }
-
-        //wait until previous prompts are closed
-        try {
-            dialogAvailable.acquire();
-        }
-        catch(InterruptedException e) {
-            log.warn("Failed to acquire dialog", e);
-            return false;
-        }
-
-        //prompt user for access
-        boolean allowed = trayManager.showGatewayDialog(UID, request, prompt, position);
-
-        dialogAvailable.release();
-
-        return allowed;
+        return true;
     }
 
     private Point findDialogPosition(Session session, JSONObject positionData) {
