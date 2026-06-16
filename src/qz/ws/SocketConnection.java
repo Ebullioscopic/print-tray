@@ -3,7 +3,6 @@ package qz.ws;
 import jssc.SerialPortException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import qz.auth.Certificate;
 import qz.communication.*;
 import qz.printer.status.StatusMonitor;
 import qz.utils.FileWatcher;
@@ -16,8 +15,6 @@ public class SocketConnection {
 
     private static final Logger log = LogManager.getLogger(SocketConnection.class);
 
-
-    private Certificate certificate;
 
     private volatile DeviceListener deviceListener;
 
@@ -33,18 +30,8 @@ public class SocketConnection {
     private final HashMap<DeviceOptions,DeviceIO> openDevices = new HashMap<>();
 
 
-    public SocketConnection(Certificate cert) {
-        certificate = cert;
+    public SocketConnection() {
     }
-
-    public Certificate getCertificate() {
-        return certificate;
-    }
-
-    public void setCertificate(Certificate newCert) {
-        certificate = newCert;
-    }
-
 
     public void addSerialPort(String port, SerialIO io) {
         openSerialPorts.put(port, io);
@@ -133,7 +120,7 @@ public class SocketConnection {
      * Explicitly closes all open serial and usb connections setup through this object
      */
     public synchronized void disconnect() throws SerialPortException, DeviceException, IOException {
-        log.info("Closing all communication channels for {}", certificate.getCommonName());
+        log.info("Closing all communication channels");
 
         for(SerialIO sio : openSerialPorts.values()) {
             sio.close();

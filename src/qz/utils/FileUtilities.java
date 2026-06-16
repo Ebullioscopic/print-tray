@@ -23,8 +23,6 @@ import org.w3c.dom.Document;
 import org.w3c.dom.NodeList;
 import org.xml.sax.SAXException;
 import qz.App;
-import qz.auth.Certificate;
-import qz.auth.Request;
 import qz.common.ByteArrayBuilder;
 import qz.common.Constants;
 import qz.common.PropertyHelper;
@@ -238,14 +236,10 @@ public class FileUtilities {
      *    3. Is the location whitelisted?
      *    4. Is the file extension permitted
      */
-    private static void checkFileRequest(Path path, FileParams fp, Request request, boolean allowRootDir) throws AccessDeniedException {
+    private static void checkFileRequest(Path path, FileParams fp, boolean allowRootDir) throws AccessDeniedException {
         if(!FILE_IO_ENABLED) {
             throw new AccessDeniedException("File operations are disabled");
-        } else if(!request.isVerified() && FILE_IO_STRICT) {
-            throw new AccessDeniedException("File request is not verified");
-        } else if(request.getCertificate() == null || !request.getCertificate().isTrusted()) {
-            throw new AccessDeniedException("Certificate provided is not trusted");
-        } else if(!isWhiteListed(path, allowRootDir, fp.isSandbox(), request)) {
+        } else if(!isWhiteListed(path, allowRootDir, fp.isSandbox())) {
             throw new AccessDeniedException("File operation is not in a permitted location");
         } else if(!allowRootDir && !Files.isDirectory(path)) {
             if (!isGoodExtension(path)) {
@@ -254,16 +248,16 @@ public class FileUtilities {
         }
     }
 
-    public static Path getAbsolutePath(JSONObject params, Request request, boolean allowRootDir) throws JSONException, IOException {
-        return getAbsolutePath(params, request, allowRootDir, false);
+    public static Path getAbsolutePath(JSONObject params, boolean allowRootDir) throws JSONException, IOException {
+        return getAbsolutePath(params, allowRootDir, false);
     }
 
-    public static Path getAbsolutePath(JSONObject params, Request request, boolean allowRootDir, boolean createMissing) throws JSONException, IOException {
+    public static Path getAbsolutePath(JSONObject params, boolean allowRootDir, boolean createMissing) throws JSONException, IOException {
         FileParams fp = new FileParams(params);
-        String commonName = request.isVerified()? escapeFileName(request.getCertName()):"UNTRUSTED";
+        String commonName = "UNTRUSTED";
 
         Path path = createAbsolutePath(fp, commonName);
-        checkFileRequest(path, fp, request, allowRootDir);
+        checkFileRequest(path, fp, allowRootDir);
         initializeRootFolder(fp, commonName);
 
         if (createMissing) {
@@ -355,8 +349,8 @@ public class FileUtilities {
      * Currently hard-coded to the QZ data directory or anything provided by qz-tray.properties
      * e.g. %APPDATA%/qz/data or $HOME/.qz/data, etc
      */
-    public static boolean isWhiteListed(Path path, boolean allowRootDir, boolean sandbox, Request request) {
-        String commonName = request.isVerified()? escapeFileName(request.getCertName()):"UNTRUSTED";
+    public static boolean isWhiteListed(Path path, boolean allowRootDir, boolean sandbox) {
+        String commonName = "UNTRUSTED";
         if (whiteList == null) {
             whiteList = new ArrayList<>();
             //default sandbox locations. More can be added through the properties file
@@ -708,17 +702,6 @@ public class FileUtilities {
         }
 
         localFileMap.put(name, null);
-    }
-
-    public static ArgParser.ExitStatus addToCertList(String list, File certFile) throws Exception {
-        FileReader fr = new FileReader(certFile);
-        Certificate cert = new Certificate(IOUtils.toString(fr));
-        if(FileUtilities.printLineToFile(list, cert.data(), !SystemUtilities.isAdmin())) {
-            log.info("Successfully added {} to {} list", cert.getOrganization(), ALLOW_FILE);
-            return ArgParser.ExitStatus.SUCCESS;
-        }
-        log.error("Failed to add {} to {} list", cert.getOrganization(), ALLOW_FILE);
-        return ArgParser.ExitStatus.GENERAL_ERROR;
     }
 
     public static synchronized boolean deleteFromFile(String fileName, String deleteLine, boolean local) {

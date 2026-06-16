@@ -15,7 +15,6 @@ import org.eclipse.jetty.websocket.api.exceptions.WebSocketException;
 import org.eclipse.jetty.websocket.server.JettyServerUpgradeRequest;
 import org.eclipse.jetty.websocket.server.JettyServerUpgradeResponse;
 import org.usb4java.LoaderException;
-import qz.auth.Certificate;
 import qz.auth.Request;
 import qz.common.Constants;
 import qz.common.TrayManager;
@@ -34,7 +33,6 @@ import java.io.Reader;
 import java.net.InetSocketAddress;
 import java.nio.channels.ClosedChannelException;
 import java.nio.file.*;
-import java.security.cert.CertificateException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Locale;
@@ -63,8 +61,8 @@ public class PrintSocketClient {
         log.info("Connection opened from {} on socket port {}", session.getRemoteAddress(), ((InetSocketAddress)session.getLocalAddress()).getPort());
         trayManager.displayInfoMessage("Client connected");
 
-        //new connections are unknown until they send a proper certificate
-        openConnections.put(((InetSocketAddress)session.getRemoteAddress()).getPort(), new SocketConnection(Certificate.UNKNOWN));
+        log.debug("Connected to client {}", ((InetSocketAddress)session.getRemoteAddress()).getPort());
+        openConnections.put(((InetSocketAddress)session.getRemoteAddress()).getPort(), new SocketConnection());
     }
 
     @OnWebSocketClose
@@ -120,44 +118,10 @@ public class PrintSocketClient {
 
             Integer connectionPort = ((InetSocketAddress)session.getRemoteAddress()).getPort();
             SocketConnection connection = openConnections.get(connectionPort);
-            Request request = new Request(connection.getCertificate(), json);
-
-            //if sent a certificate use that instead for this connection
-            if (json.has("certificate")) {
-                try {
-                    Certificate certificate = new Certificate(json.optString("certificate"));
-                    connection.setCertificate(certificate);
-
-                    request.markNewConnection(certificate);
-
-                    log.debug("Received new certificate from connection through {}", connectionPort);
-                }
-                catch(CertificateException ignore) {
-                    request.markNewConnection(Certificate.UNKNOWN);
-                }
-
-                sendResult(session, UID, null);
-
-                return; //this is a setup call, so no further processing is needed
-            }
+            Request request = new Request(json);
 
             //check request signature
             SocketMethod call = SocketMethod.findFromCall(json.optString("call"));
-            if (request.hasCertificate() && call.isDialogShown()) {
-                if (json.optLong("timestamp") + Constants.VALID_SIGNING_PERIOD < System.currentTimeMillis()
-                        || json.optLong("timestamp") - Constants.VALID_SIGNING_PERIOD > System.currentTimeMillis()) {
-                    //bad timestamps use the expired certificate
-                    log.warn("Expired signature on request");
-                    request.setValidity(Request.Validity.EXPIRED);
-                } else if (json.isNull("signature") || !validSignature(request.getCertificate(), json)) {
-                    //bad signatures use the unsigned certificate
-                    log.warn("Bad signature on request");
-                    request.setValidity(Request.Validity.UNSIGNED);
-                } else {
-                    log.trace("Valid signature from {}", request.getCertName());
-                    request.setValidity(Request.Validity.TRUSTED);
-                }
-            }
 
             //spawn thread to prevent long processes from blocking
             final String tUID = UID;
@@ -204,14 +168,6 @@ public class PrintSocketClient {
         }
 
         return msg;
-    }
-
-    private boolean validSignature(Certificate certificate, JSONObject message) throws JSONException {
-        JSONObject copy = new JSONObject(message, new String[] {"call", "params", "timestamp"});
-        String signature = message.optString("signature");
-        String algorithm = message.optString("signAlgorithm", "SHA1").toUpperCase(Locale.ENGLISH);
-
-        return certificate.isSignatureValid(Certificate.Algorithm.valueOf(algorithm), signature, copy.toString().replaceAll("\\\\/", "/"));
     }
 
     /**
@@ -524,7 +480,7 @@ public class PrintSocketClient {
 
             case FILE_START_LISTENING: {
                 FileParams fileParams = new FileParams(params);
-                Path absPath = FileUtilities.getAbsolutePath(params, request, true);
+                Path absPath = FileUtilities.getAbsolutePath(params, true);
                 FileIO fileIO = new FileIO(session, params, fileParams.getPath(), absPath);
 
                 if (connection.getFileListener(absPath) == null && !fileIO.isWatching()) {
@@ -540,12 +496,11 @@ public class PrintSocketClient {
             }
             case FILE_STOP_LISTENING: {
                 // Coerce to trusted state for unsigned request
-                request.setValidity(Request.Validity.TRUSTED);
                 if (params.isNull("path")) {
                     connection.removeAllFileListeners();
                     sendResult(session, UID, null);
                 } else {
-                    Path absPath = FileUtilities.getAbsolutePath(params, request, true);
+                    Path absPath = FileUtilities.getAbsolutePath(params, true);
                     FileIO fileIO = connection.getFileListener(absPath);
 
                     if (fileIO != null) {
@@ -561,7 +516,7 @@ public class PrintSocketClient {
                 break;
             }
             case FILE_LIST: {
-                Path absPath = FileUtilities.getAbsolutePath(params, request, true);
+                Path absPath = FileUtilities.getAbsolutePath(params, true);
 
                 if (Files.exists(absPath)) {
                     if (Files.isDirectory(absPath)) {
@@ -581,7 +536,7 @@ public class PrintSocketClient {
             }
             case FILE_READ: {
                 FileParams fileParams = new FileParams(params);
-                Path absPath = FileUtilities.getAbsolutePath(params, request, false);
+                Path absPath = FileUtilities.getAbsolutePath(params, false);
                 if (Files.exists(absPath)) {
                     if (Files.isReadable(absPath)) {
                         sendResult(session, UID, fileParams.toString(Files.readAllBytes(absPath)));
@@ -598,7 +553,7 @@ public class PrintSocketClient {
             }
             case FILE_WRITE: {
                 FileParams fileParams = new FileParams(params);
-                Path absPath = FileUtilities.getAbsolutePath(params, request, false, true);
+                Path absPath = FileUtilities.getAbsolutePath(params, false, true);
 
                 Files.write(absPath, fileParams.getData(), StandardOpenOption.CREATE, fileParams.getAppendMode());
                 FileUtilities.inheritParentPermissions(absPath);
@@ -606,7 +561,7 @@ public class PrintSocketClient {
                 break;
             }
             case FILE_REMOVE: {
-                Path absPath = FileUtilities.getAbsolutePath(params, request, false);
+                Path absPath = FileUtilities.getAbsolutePath(params, false);
 
                 if (Files.exists(absPath)) {
                     Files.delete(absPath);

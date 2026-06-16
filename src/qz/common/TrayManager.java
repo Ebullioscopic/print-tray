@@ -15,7 +15,6 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.eclipse.jetty.server.Server;
 import qz.App;
-import qz.auth.Certificate;
 import qz.auth.Request;
 import qz.installer.shortcut.ShortcutCreator;
 import qz.printer.PrintServiceMatcher;
@@ -61,15 +60,10 @@ public class TrayManager {
     private TrayType tray;
 
     private ConfirmDialog confirmDialog;
-    private final GatewayDialog gatewayDialog;
     private AboutDialog aboutDialog;
     private LogDialog logDialog;
-    private SiteManagerDialog sitesDialog;
     private ArrayList<Component> componentList;
     private IconCache.Icon shownIcon;
-
-    // Need a class reference to this so we can set it from the request dialog window
-    private JCheckBoxMenuItem anonymousItem;
 
     // The name this UI component will use, i.e "QZ Print 1.9.0"
     private final String name;
@@ -97,9 +91,6 @@ public class TrayManager {
 
         prefs = new PropertyHelper(FileUtilities.USER_DIR + File.separator + Constants.PREFS_FILE + ".properties");
         prefs.remove(SECURITY_FILE_STRICT.getMatch()); // per https://github.com/qzind/tray/issues/1337
-
-        // Set strict certificate mode preference
-        Certificate.setTrustBuiltIn(!getPref(TRAY_STRICTMODE));
 
         // Configures JSON websocket messages
         Substitutions.getInstance();
@@ -163,14 +154,8 @@ public class TrayManager {
             System.setProperty("sun.java2d.print.polling", "false");
         }
 
-        gatewayDialog = new GatewayDialog(headless, null,"Action Required", iconCache);
-
-        if(headless) {
-            // If headless, look for a location to forward message dialogs to
-            gatewayDialog.setEndpoint(PrefsSearch.getString(TRAY_DIALOG_ENDPOINT, prefs, App.getTrayProperties()));
-        } else {
+        if(!headless) {
             componentList = new ArrayList<>();
-            componentList.add(gatewayDialog.getDialog());
 
             // The ok/cancel dialog
             confirmDialog = new ConfirmDialog(null, "Please Confirm", iconCache);
@@ -257,12 +242,6 @@ public class TrayManager {
         advancedMenu.setMnemonic(KeyEvent.VK_A);
         advancedMenu.setIcon(iconCache.getIcon(SETTINGS_ICON));
 
-        JMenuItem sitesItem = new JMenuItem("Site Manager...", iconCache.getIcon(SAVED_ICON));
-        sitesItem.setMnemonic(KeyEvent.VK_M);
-        sitesItem.addActionListener(savedListener);
-        sitesDialog = new SiteManagerDialog(sitesItem, iconCache, prefs);
-        componentList.add(sitesDialog);
-
         JMenuItem diagnosticMenu = new JMenu("Diagnostic");
 
         JMenuItem browseApp = new JMenuItem("Browse App folder...", iconCache.getIcon(FOLDER_ICON));
@@ -326,20 +305,12 @@ public class TrayManager {
         desktopItem.setMnemonic(KeyEvent.VK_D);
         desktopItem.addActionListener(desktopListener());
 
-        anonymousItem = new JCheckBoxMenuItem("Block anonymous requests");
-        anonymousItem.setToolTipText("Blocks all requests that do not contain a valid certificate/signature");
-        anonymousItem.setMnemonic(KeyEvent.VK_K);
-        anonymousItem.setState(Certificate.UNKNOWN.isBlocked());
-        anonymousItem.addActionListener(anonymousListener);
-
         if(Constants.ENABLE_DIAGNOSTICS) {
             advancedMenu.add(diagnosticMenu);
             advancedMenu.add(new JSeparator());
         }
-        advancedMenu.add(sitesItem);
         advancedMenu.add(desktopItem);
         advancedMenu.add(new JSeparator());
-        advancedMenu.add(anonymousItem);
 
         JMenuItem reloadItem = new JMenuItem("Reload", iconCache.getIcon(RELOAD_ICON));
         reloadItem.setMnemonic(KeyEvent.VK_R);
@@ -407,28 +378,6 @@ public class TrayManager {
         };
     }
 
-    private final ActionListener savedListener = new ActionListener() {
-        public void actionPerformed(ActionEvent e) {
-            sitesDialog.setVisible(true);
-        }
-    };
-
-    private final ActionListener anonymousListener = e -> {
-        boolean checkBoxState = true;
-        if (e.getSource() instanceof JCheckBoxMenuItem) {
-            checkBoxState = ((JCheckBoxMenuItem)e.getSource()).getState();
-        }
-
-        log.debug("Block unsigned: {}", checkBoxState);
-
-        if (checkBoxState) {
-            blackList(Certificate.UNKNOWN);
-        } else {
-            FileUtilities.deleteFromFile(Constants.BLOCK_FILE, Certificate.UNKNOWN.data(), true);
-            FileUtilities.deleteFromFile(Constants.BLOCK_FILE, Certificate.UNKNOWN.data(), false);
-        }
-    };
-
     private final ActionListener logListener = new ActionListener() {
         @Override
         public void actionPerformed(ActionEvent e) {
@@ -495,58 +444,6 @@ public class TrayManager {
      */
     private void showErrorDialog(String message) {
         JOptionPane.showMessageDialog(null, message, name, JOptionPane.ERROR_MESSAGE);
-    }
-
-    public boolean showGatewayDialog(final String UID, final Request request, final String prompt, final Point position) {
-        // No way to prompt, hope it's whitelisted
-        if (headless && gatewayDialog.getEndpoint() == null) {
-            return request.hasSavedCert();
-        }
-
-        GatewayDialog.runSafely(headless, () -> gatewayDialog.prompt(UID, "%s wants to " + prompt, request, position));
-
-        GatewayDialog.Response response = gatewayDialog.getResponse();
-        switch(response) {
-            case ALWAYS_ALLOW:
-                whiteList(request.getCertificate());
-            case TEMPORARY_ALLOW:
-                log.info("Allowed {} to {}", request.getCertName(), prompt);
-                break;
-            case ALWAYS_BLOCK:
-                blackList(request.getCertificate());
-            case TEMPORARY_BLOCK:
-            case UNANSWERED:
-                log.info("Denied {} to {}", request.getCertName(), prompt);
-        }
-
-        if(response.alwaysBlockAnonymous(request)) {
-            // Treat as "block anonymous requests" to prevent pop-up abuse
-            if(!headless) {
-                anonymousItem.setState(false);
-                anonymousItem.doClick();
-            } else {
-                // simulate the click
-                anonymousListener.actionPerformed(new ActionEvent(gatewayDialog, ActionEvent.ACTION_PERFORMED, "command"));
-            }
-        }
-
-        return response.isAllowed();
-    }
-
-    private void whiteList(Certificate cert) {
-        if (FileUtilities.printLineToFile(Constants.ALLOW_FILE, cert.data())) {
-            displayInfoMessage(String.format(Constants.ALLOW_SITES_TEXT, cert.getOrganization()));
-        } else {
-            displayErrorMessage("Failed to write to file (Insufficient user privileges)");
-        }
-    }
-
-    private void blackList(Certificate cert) {
-        if (FileUtilities.printLineToFile(Constants.BLOCK_FILE, cert.data())) {
-            displayInfoMessage(String.format(Constants.BLOCK_SITES_TEXT, cert.getOrganization()));
-        } else {
-            displayErrorMessage("Failed to write to file (Insufficient user privileges)");
-        }
     }
 
     public void setServer(Server server, WebsocketPorts websocketPorts) {
