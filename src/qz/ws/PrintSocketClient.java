@@ -120,6 +120,12 @@ public class PrintSocketClient {
             SocketConnection connection = openConnections.get(connectionPort);
             Request request = new Request(json);
 
+            // ignore certificate messages from web API and acknowledge them
+            if (json.has("certificate")) {
+                sendResult(session, UID, null);
+                return;
+            }
+
             //check request signature
             SocketMethod call = SocketMethod.findFromCall(json.optString("call"));
 
