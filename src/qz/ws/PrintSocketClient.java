@@ -49,8 +49,6 @@ public class PrintSocketClient {
 
     private final TrayManager trayManager = PrintSocketServer.getTrayManager();
 
-    private static final Semaphore dialogAvailable = new Semaphore(1, true);
-
     //websocket port -> Connection
     private static final HashMap<Integer,SocketConnection> openConnections = new HashMap<>();
 
@@ -138,13 +136,7 @@ public class PrintSocketClient {
                     request.markNewConnection(Certificate.UNKNOWN);
                 }
 
-                if (allowedFromDialog(UID, request, "connect to " + Constants.ABOUT_TITLE,
-                                      findDialogPosition(session, json.optJSONObject("position")))) {
-                    sendResult(session, UID, null);
-                } else {
-                    sendError(session, UID, "Connection blocked by client");
-                    session.disconnect();
-                }
+                sendResult(session, UID, null);
 
                 return; //this is a setup call, so no further processing is needed
             }
@@ -248,22 +240,12 @@ public class PrintSocketClient {
             return;
         }
 
-        String prompt = call.getDialogPrompt();
         if (call == SocketMethod.PRINT) {
-            //special formatting for print dialogs
             JSONObject pr = params.optJSONObject("printer");
-            if (pr != null) {
-                prompt = String.format(prompt, pr.optString("name", pr.optString("file", pr.optString("host", "an undefined location"))));
-            } else {
+            if (pr == null) {
                 sendError(session, UID, "A printer must be specified before printing");
                 return;
             }
-        }
-
-        if (call.isDialogShown()
-                && !allowedFromDialog(UID, request, prompt, findDialogPosition(session, json.optJSONObject("position")))) {
-            sendError(session, UID, "Request blocked");
-            return;
         }
 
         if (call != SocketMethod.GET_VERSION) {
@@ -685,19 +667,6 @@ public class PrintSocketClient {
         }
     }
 
-    private boolean allowedFromDialog(String UID, Request request, String prompt, Point position) {
-        return true;
-    }
-
-    private Point findDialogPosition(Session session, JSONObject positionData) {
-        Point pos = new Point(0, 0);
-        if (((InetSocketAddress)session.getRemoteAddress()).getAddress().isLoopbackAddress() && positionData != null
-                && !positionData.isNull("x") && !positionData.isNull("y")) {
-            pos.move(positionData.optInt("x"), positionData.optInt("y"));
-        }
-
-        return pos;
-    }
 
 
     /**
